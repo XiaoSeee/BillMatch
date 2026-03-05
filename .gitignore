@@ -1,0 +1,47 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+artifacts/
+
+# Publish/package outputs
+publish/
+*.nupkg
+*.snupkg
+
+# Root packaged executable
+/BillMatch.exe
+
+# Test outputs
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+coverage-report/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.rsuser
+*.DotSettings.user
+_ReSharper*/
+
+# NuGet
+packages/
+
+# Python cache (legacy app.py)
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# OS files
+Thumbs.db
+Desktop.ini
