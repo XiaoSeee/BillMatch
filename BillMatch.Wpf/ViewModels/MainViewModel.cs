@@ -108,10 +108,6 @@ public partial class MainViewModel : ObservableObject
             QianjiFileName = Path.GetFileName(dialog.FileName);
             AppendLog($"已选择钱迹文件: {_qianjiFilePath}");
 
-            if (string.Equals(Path.GetExtension(_qianjiFilePath), ".xls", StringComparison.OrdinalIgnoreCase))
-            {
-                AppendLog("警告：当前钱迹文件为 .xls 旧格式，EPPlus 无法解析。请先另存为 .xlsx 后再导入。");
-            }
         }
     }
 
@@ -137,10 +133,6 @@ public partial class MainViewModel : ObservableObject
             {
                 AppendLog($"  - {path}");
 
-                if (string.Equals(Path.GetExtension(path), ".xls", StringComparison.OrdinalIgnoreCase))
-                {
-                    AppendLog("  警告：检测到 .xls 旧格式文件，EPPlus 无法解析。请先另存为 .xlsx 后再导入。");
-                }
             }
 
             // 自动读取日期范围

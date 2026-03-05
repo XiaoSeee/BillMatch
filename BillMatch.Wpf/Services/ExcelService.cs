@@ -1,7 +1,9 @@
-using OfficeOpenXml;
-using BillMatch.Wpf.Models;
-using System.Text.RegularExpressions;
 using System.IO;
+using System.Text.RegularExpressions;
+using BillMatch.Wpf.Models;
+using NPOI.HSSF.UserModel;
+using NPOI.SS.UserModel;
+using OfficeOpenXml;
 
 namespace BillMatch.Wpf.Services;
 
@@ -9,207 +11,44 @@ public class ExcelService : IExcelService
 {
     public List<Transaction> LoadExcel(string filePath, ExcelMapping mapping)
     {
-        var transactions = new List<Transaction>();
+        var fileInfo = new FileInfo(filePath);
+        if (!fileInfo.Exists)
+        {
+            throw new FileNotFoundException($"找不到文件: {filePath}");
+        }
 
         try
         {
-            var fileInfo = new FileInfo(filePath);
-            if (!fileInfo.Exists)
-            {
-                throw new FileNotFoundException($"找不到文件: {filePath}");
-            }
-
-            if (string.Equals(fileInfo.Extension, ".xls", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new NotSupportedException($"不支持 .xls 旧格式文件: {Path.GetFileName(filePath)}。请先在 Excel 中另存为 .xlsx 后再导入。");
-            }
-
-            using (var package = new ExcelPackage(fileInfo))
-            {
-                if (package.Workbook.Worksheets.Count == 0)
-                {
-                    throw new Exception("Excel 文件中没有工作表。");
-                }
-
-                var worksheet = package.Workbook.Worksheets[0];
-                if (worksheet.Dimension == null)
-                {
-                    return transactions;
-                }
-
-                // 智能表头识别
-                int headerRow = FindHeaderRow(worksheet);
-                int startRow = headerRow + 1;
-
-                // 将列名转换为索引
-                int dateCol = ExcelColumnHelper.ColumnNameToIndex(mapping.DateColumn) + 1;
-                int amountCol = ExcelColumnHelper.ColumnNameToIndex(mapping.AmountColumn) + 1;
-                int cardCol = !string.IsNullOrEmpty(mapping.CardColumn) ? ExcelColumnHelper.ColumnNameToIndex(mapping.CardColumn) + 1 : 0;
-                int descCol = !string.IsNullOrEmpty(mapping.DescriptionColumn) ? ExcelColumnHelper.ColumnNameToIndex(mapping.DescriptionColumn) + 1 : 0;
-                int acc1Col = !string.IsNullOrEmpty(mapping.Account1Column) ? ExcelColumnHelper.ColumnNameToIndex(mapping.Account1Column) + 1 : 0;
-                int acc2Col = !string.IsNullOrEmpty(mapping.Account2Column) ? ExcelColumnHelper.ColumnNameToIndex(mapping.Account2Column) + 1 : 0;
-
-                for (int row = startRow; row <= worksheet.Dimension.End.Row; row++)
-                {
-                    var transaction = new Transaction();
-
-                    // 读取日期列
-                    if (dateCol > 0 && dateCol <= worksheet.Dimension.End.Column)
-                    {
-                        var dateCell = worksheet.Cells[row, dateCol];
-                        if (dateCell.Value != null)
-                        {
-                            transaction.Date = NormalizeDate(dateCell.Value);
-                        }
-                    }
-
-                    // 读取金额列
-                    if (amountCol > 0 && amountCol <= worksheet.Dimension.End.Column)
-                    {
-                        var amountCell = worksheet.Cells[row, amountCol];
-                        if (amountCell.Value != null)
-                        {
-                            transaction.Amount = NormalizeAmount(amountCell.Value);
-                        }
-                    }
-
-                    // 读取卡号列
-                    if (cardCol > 0 && cardCol <= worksheet.Dimension.End.Column)
-                    {
-                        var cardCell = worksheet.Cells[row, cardCol];
-                        if (cardCell.Value != null)
-                        {
-                            transaction.CardNumber = ExtractCardTail(cardCell.Value);
-                        }
-                    }
-
-                    // 读取描述列
-                    if (descCol > 0 && descCol <= worksheet.Dimension.End.Column)
-                    {
-                        var descCell = worksheet.Cells[row, descCol];
-                        if (descCell.Value != null)
-                        {
-                            transaction.Description = descCell.Value?.ToString();
-                        }
-                    }
-
-                    // 读取账户1列
-                    if (acc1Col > 0 && acc1Col <= worksheet.Dimension.End.Column)
-                    {
-                        var acc1Cell = worksheet.Cells[row, acc1Col];
-                        if (acc1Cell.Value != null)
-                        {
-                            transaction.Account1 = acc1Cell.Value?.ToString();
-                        }
-                    }
-
-                    // 读取账户2列
-                    if (acc2Col > 0 && acc2Col <= worksheet.Dimension.End.Column)
-                    {
-                        var acc2Cell = worksheet.Cells[row, acc2Col];
-                        if (acc2Cell.Value != null)
-                        {
-                            transaction.Account2 = acc2Cell.Value?.ToString();
-                        }
-                    }
-
-                    // 只添加有效的交易（有日期或金额）
-                    if (transaction.Date != default || transaction.Amount != 0)
-                    {
-                        transactions.Add(transaction);
-                    }
-                }
-            }
-        }
-        catch (NotSupportedException)
-        {
-            throw;
+            return IsXls(fileInfo.Extension)
+                ? LoadXls(fileInfo, mapping)
+                : LoadOpenXml(fileInfo, mapping);
         }
         catch (Exception ex)
         {
-            throw new Exception($"解析 Excel 文件时出错 ({Path.GetFileName(filePath)}): {ex.Message}", ex);
+            throw new Exception($"解析 Excel 文件时出错({Path.GetFileName(filePath)}): {ex.Message}", ex);
         }
-
-        return transactions;
     }
 
-    /// <summary>
-    /// 从银行账单文件读取日期范围
-    /// </summary>
     public (DateTime? MinDate, DateTime? MaxDate) GetDateRange(string filePath, string dateColumn)
     {
-        DateTime? minDate = null;
-        DateTime? maxDate = null;
+        var fileInfo = new FileInfo(filePath);
+        if (!fileInfo.Exists)
+        {
+            return (null, null);
+        }
 
         try
         {
-            var fileInfo = new FileInfo(filePath);
-            if (!fileInfo.Exists)
-            {
-                return (null, null);
-            }
-
-            if (string.Equals(fileInfo.Extension, ".xls", StringComparison.OrdinalIgnoreCase))
-            {
-                return (null, null);
-            }
-
-            using (var package = new ExcelPackage(fileInfo))
-            {
-                if (package.Workbook.Worksheets.Count == 0)
-                {
-                    return (null, null);
-                }
-
-                var worksheet = package.Workbook.Worksheets[0];
-                if (worksheet.Dimension == null)
-                {
-                    return (null, null);
-                }
-
-                // 将列名转换为索引
-                int dateCol = ExcelColumnHelper.ColumnNameToIndex(dateColumn) + 1;
-                if (dateCol <= 0 || dateCol > worksheet.Dimension.End.Column)
-                {
-                    return (null, null);
-                }
-
-                // 查找表头行
-                int headerRow = FindHeaderRow(worksheet);
-                int startRow = headerRow + 1;
-
-                for (int row = startRow; row <= worksheet.Dimension.End.Row; row++)
-                {
-                    var cell = worksheet.Cells[row, dateCol];
-                    if (cell.Value != null)
-                    {
-                        var date = NormalizeDate(cell.Value);
-                        if (date != default)
-                        {
-                            if (!minDate.HasValue || date < minDate.Value)
-                            {
-                                minDate = date;
-                            }
-                            if (!maxDate.HasValue || date > maxDate.Value)
-                            {
-                                maxDate = date;
-                            }
-                        }
-                    }
-                }
-            }
+            return IsXls(fileInfo.Extension)
+                ? GetDateRangeFromXls(fileInfo, dateColumn)
+                : GetDateRangeFromOpenXml(fileInfo, dateColumn);
         }
         catch
         {
-            // 读取失败时返回null
+            return (null, null);
         }
-
-        return (minDate, maxDate);
     }
 
-    /// <summary>
-    /// 智能查找表头行（启发式搜索）
-    /// </summary>
     internal int FindHeaderRow(ExcelWorksheet worksheet)
     {
         for (int row = 1; row <= Math.Min(5, worksheet.Dimension.End.Row); row++)
@@ -217,22 +56,46 @@ public class ExcelService : IExcelService
             for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
             {
                 var cellValue = worksheet.Cells[row, col].Value?.ToString();
-                if (!string.IsNullOrEmpty(cellValue))
+                if (IsHeaderKeyword(cellValue))
                 {
-                    if (cellValue.Contains("交易日期") || cellValue.Contains("日期") || 
-                        cellValue.Contains("时间") || cellValue.Contains("金额"))
-                    {
-                        return row;
-                    }
+                    return row;
                 }
             }
         }
+
         return 1;
     }
 
-    /// <summary>
-    /// 归一化日期
-    /// </summary>
+    internal int FindHeaderRow(ISheet sheet)
+    {
+        var maxScanRow = Math.Min(4, sheet.LastRowNum);
+
+        for (int rowIndex = 0; rowIndex <= maxScanRow; rowIndex++)
+        {
+            var row = sheet.GetRow(rowIndex);
+            if (row == null)
+            {
+                continue;
+            }
+
+            for (int colIndex = row.FirstCellNum; colIndex < row.LastCellNum; colIndex++)
+            {
+                if (colIndex < 0)
+                {
+                    continue;
+                }
+
+                var cellValue = GetCellValue(row.GetCell(colIndex))?.ToString();
+                if (IsHeaderKeyword(cellValue))
+                {
+                    return rowIndex;
+                }
+            }
+        }
+
+        return 0;
+    }
+
     internal DateTime NormalizeDate(object value)
     {
         if (value == null) return default;
@@ -284,32 +147,26 @@ public class ExcelService : IExcelService
         return default;
     }
 
-    /// <summary>
-    /// 归一化金额
-    /// </summary>
     internal decimal NormalizeAmount(object value)
     {
         if (value == null) return 0m;
 
         if (value is decimal dec) return dec;
         if (value is double dbl) return (decimal)dbl;
+        if (value is float flt) return (decimal)flt;
         if (value is int i) return i;
         if (value is long l) return l;
 
-        string strVal = value.ToString() ?? "";
-        strVal = strVal.Replace("￥", "").Replace(",", "").Replace("¥", "").Trim();
-        
-        if (decimal.TryParse(strVal, out var amount))
-        {
-            return amount;
-        }
+        var strVal = value.ToString() ?? string.Empty;
+        strVal = strVal.Replace("￥", "")
+            .Replace("¥", "")
+            .Replace(",", "")
+            .Replace("元", "")
+            .Trim();
 
-        return 0m;
+        return decimal.TryParse(strVal, out var amount) ? amount : 0m;
     }
 
-    /// <summary>
-    /// 从字符串中提取最后4位数字
-    /// </summary>
     internal string? ExtractCardTail(object value)
     {
         if (value == null) return null;
@@ -334,16 +191,359 @@ public class ExcelService : IExcelService
         }
         else
         {
-            valueStr = value.ToString() ?? "";
+            valueStr = value.ToString() ?? string.Empty;
         }
 
-        string digits = Regex.Replace(valueStr, @"\D", "");
+        var digits = Regex.Replace(valueStr, @"\D", "");
 
-        if (digits.Length >= 4)
+        return digits.Length >= 4 ? digits.Substring(digits.Length - 4) : null;
+    }
+
+    private List<Transaction> LoadOpenXml(FileInfo fileInfo, ExcelMapping mapping)
+    {
+        var transactions = new List<Transaction>();
+
+        using var package = new ExcelPackage(fileInfo);
+        if (package.Workbook.Worksheets.Count == 0)
         {
-            return digits.Substring(digits.Length - 4);
+            throw new Exception("Excel 文件中没有工作表。");
         }
 
-        return null;
+        var worksheet = package.Workbook.Worksheets[0];
+        if (worksheet.Dimension == null)
+        {
+            return transactions;
+        }
+
+        var headerRow = FindHeaderRow(worksheet);
+        var startRow = headerRow + 1;
+
+        var dateCol = ExcelColumnHelper.ColumnNameToIndex(mapping.DateColumn) + 1;
+        var amountCol = ExcelColumnHelper.ColumnNameToIndex(mapping.AmountColumn) + 1;
+        var cardCol = TryGetColumnIndex(mapping.CardColumn, oneBased: true);
+        var descCol = TryGetColumnIndex(mapping.DescriptionColumn, oneBased: true);
+        var acc1Col = TryGetColumnIndex(mapping.Account1Column, oneBased: true);
+        var acc2Col = TryGetColumnIndex(mapping.Account2Column, oneBased: true);
+
+        for (var row = startRow; row <= worksheet.Dimension.End.Row; row++)
+        {
+            var transaction = new Transaction();
+
+            if (dateCol <= worksheet.Dimension.End.Column)
+            {
+                var value = worksheet.Cells[row, dateCol].Value;
+                if (value != null)
+                {
+                    transaction.Date = NormalizeDate(value);
+                }
+            }
+
+            if (amountCol <= worksheet.Dimension.End.Column)
+            {
+                var value = worksheet.Cells[row, amountCol].Value;
+                if (value != null)
+                {
+                    transaction.Amount = NormalizeAmount(value);
+                }
+            }
+
+            if (cardCol.HasValue && cardCol.Value <= worksheet.Dimension.End.Column)
+            {
+                var value = worksheet.Cells[row, cardCol.Value].Value;
+                if (value != null)
+                {
+                    transaction.CardNumber = ExtractCardTail(value);
+                }
+            }
+
+            if (descCol.HasValue && descCol.Value <= worksheet.Dimension.End.Column)
+            {
+                var value = worksheet.Cells[row, descCol.Value].Value;
+                if (value != null)
+                {
+                    transaction.Description = value.ToString();
+                }
+            }
+
+            if (acc1Col.HasValue && acc1Col.Value <= worksheet.Dimension.End.Column)
+            {
+                var value = worksheet.Cells[row, acc1Col.Value].Value;
+                if (value != null)
+                {
+                    transaction.Account1 = value.ToString();
+                }
+            }
+
+            if (acc2Col.HasValue && acc2Col.Value <= worksheet.Dimension.End.Column)
+            {
+                var value = worksheet.Cells[row, acc2Col.Value].Value;
+                if (value != null)
+                {
+                    transaction.Account2 = value.ToString();
+                }
+            }
+
+            if (transaction.Date != default || transaction.Amount != 0)
+            {
+                transactions.Add(transaction);
+            }
+        }
+
+        return transactions;
+    }
+
+    private List<Transaction> LoadXls(FileInfo fileInfo, ExcelMapping mapping)
+    {
+        var transactions = new List<Transaction>();
+
+        using var stream = fileInfo.OpenRead();
+        IWorkbook workbook = new HSSFWorkbook(stream);
+        if (workbook.NumberOfSheets == 0)
+        {
+            throw new Exception("Excel 文件中没有工作表。");
+        }
+
+        var sheet = workbook.GetSheetAt(0);
+        if (sheet == null || sheet.LastRowNum < 0)
+        {
+            return transactions;
+        }
+
+        var headerRowIndex = FindHeaderRow(sheet);
+        var startRowIndex = headerRowIndex + 1;
+
+        var dateCol = ExcelColumnHelper.ColumnNameToIndex(mapping.DateColumn);
+        var amountCol = ExcelColumnHelper.ColumnNameToIndex(mapping.AmountColumn);
+        var cardCol = TryGetColumnIndex(mapping.CardColumn, oneBased: false);
+        var descCol = TryGetColumnIndex(mapping.DescriptionColumn, oneBased: false);
+        var acc1Col = TryGetColumnIndex(mapping.Account1Column, oneBased: false);
+        var acc2Col = TryGetColumnIndex(mapping.Account2Column, oneBased: false);
+
+        for (var rowIndex = startRowIndex; rowIndex <= sheet.LastRowNum; rowIndex++)
+        {
+            var row = sheet.GetRow(rowIndex);
+            if (row == null)
+            {
+                continue;
+            }
+
+            var transaction = new Transaction();
+
+            var dateValue = GetCellValue(row.GetCell(dateCol));
+            if (dateValue != null)
+            {
+                transaction.Date = NormalizeDate(dateValue);
+            }
+
+            var amountValue = GetCellValue(row.GetCell(amountCol));
+            if (amountValue != null)
+            {
+                transaction.Amount = NormalizeAmount(amountValue);
+            }
+
+            if (cardCol.HasValue)
+            {
+                var cardValue = GetCellValue(row.GetCell(cardCol.Value));
+                if (cardValue != null)
+                {
+                    transaction.CardNumber = ExtractCardTail(cardValue);
+                }
+            }
+
+            if (descCol.HasValue)
+            {
+                var descValue = GetCellValue(row.GetCell(descCol.Value));
+                if (descValue != null)
+                {
+                    transaction.Description = descValue.ToString();
+                }
+            }
+
+            if (acc1Col.HasValue)
+            {
+                var acc1Value = GetCellValue(row.GetCell(acc1Col.Value));
+                if (acc1Value != null)
+                {
+                    transaction.Account1 = acc1Value.ToString();
+                }
+            }
+
+            if (acc2Col.HasValue)
+            {
+                var acc2Value = GetCellValue(row.GetCell(acc2Col.Value));
+                if (acc2Value != null)
+                {
+                    transaction.Account2 = acc2Value.ToString();
+                }
+            }
+
+            if (transaction.Date != default || transaction.Amount != 0)
+            {
+                transactions.Add(transaction);
+            }
+        }
+
+        return transactions;
+    }
+
+    private (DateTime? MinDate, DateTime? MaxDate) GetDateRangeFromOpenXml(FileInfo fileInfo, string dateColumn)
+    {
+        DateTime? minDate = null;
+        DateTime? maxDate = null;
+
+        using var package = new ExcelPackage(fileInfo);
+        if (package.Workbook.Worksheets.Count == 0)
+        {
+            return (null, null);
+        }
+
+        var worksheet = package.Workbook.Worksheets[0];
+        if (worksheet.Dimension == null)
+        {
+            return (null, null);
+        }
+
+        var dateCol = ExcelColumnHelper.ColumnNameToIndex(dateColumn) + 1;
+        if (dateCol <= 0 || dateCol > worksheet.Dimension.End.Column)
+        {
+            return (null, null);
+        }
+
+        var headerRow = FindHeaderRow(worksheet);
+        var startRow = headerRow + 1;
+
+        for (var row = startRow; row <= worksheet.Dimension.End.Row; row++)
+        {
+            var cellValue = worksheet.Cells[row, dateCol].Value;
+            if (cellValue == null)
+            {
+                continue;
+            }
+
+            var date = NormalizeDate(cellValue);
+            if (date == default)
+            {
+                continue;
+            }
+
+            if (!minDate.HasValue || date < minDate.Value)
+            {
+                minDate = date;
+            }
+
+            if (!maxDate.HasValue || date > maxDate.Value)
+            {
+                maxDate = date;
+            }
+        }
+
+        return (minDate, maxDate);
+    }
+
+    private (DateTime? MinDate, DateTime? MaxDate) GetDateRangeFromXls(FileInfo fileInfo, string dateColumn)
+    {
+        DateTime? minDate = null;
+        DateTime? maxDate = null;
+
+        using var stream = fileInfo.OpenRead();
+        IWorkbook workbook = new HSSFWorkbook(stream);
+        if (workbook.NumberOfSheets == 0)
+        {
+            return (null, null);
+        }
+
+        var sheet = workbook.GetSheetAt(0);
+        if (sheet == null || sheet.LastRowNum < 0)
+        {
+            return (null, null);
+        }
+
+        var dateCol = ExcelColumnHelper.ColumnNameToIndex(dateColumn);
+        var headerRowIndex = FindHeaderRow(sheet);
+        var startRowIndex = headerRowIndex + 1;
+
+        for (var rowIndex = startRowIndex; rowIndex <= sheet.LastRowNum; rowIndex++)
+        {
+            var row = sheet.GetRow(rowIndex);
+            if (row == null)
+            {
+                continue;
+            }
+
+            var value = GetCellValue(row.GetCell(dateCol));
+            if (value == null)
+            {
+                continue;
+            }
+
+            var date = NormalizeDate(value);
+            if (date == default)
+            {
+                continue;
+            }
+
+            if (!minDate.HasValue || date < minDate.Value)
+            {
+                minDate = date;
+            }
+
+            if (!maxDate.HasValue || date > maxDate.Value)
+            {
+                maxDate = date;
+            }
+        }
+
+        return (minDate, maxDate);
+    }
+
+    private static object? GetCellValue(ICell? cell)
+    {
+        if (cell == null)
+        {
+            return null;
+        }
+
+        var cellType = cell.CellType == CellType.Formula
+            ? cell.CachedFormulaResultType
+            : cell.CellType;
+
+        return cellType switch
+        {
+            CellType.Numeric => DateUtil.IsCellDateFormatted(cell)
+                ? cell.DateCellValue
+                : cell.NumericCellValue,
+            CellType.String => cell.StringCellValue,
+            CellType.Boolean => cell.BooleanCellValue,
+            CellType.Blank => null,
+            CellType.Error => null,
+            _ => cell.ToString()
+        };
+    }
+
+    private static bool IsXls(string extension) =>
+        string.Equals(extension, ".xls", StringComparison.OrdinalIgnoreCase);
+
+    private static int? TryGetColumnIndex(string? columnName, bool oneBased)
+    {
+        if (string.IsNullOrWhiteSpace(columnName))
+        {
+            return null;
+        }
+
+        var index = ExcelColumnHelper.ColumnNameToIndex(columnName);
+        return oneBased ? index + 1 : index;
+    }
+
+    private static bool IsHeaderKeyword(string? cellValue)
+    {
+        if (string.IsNullOrWhiteSpace(cellValue))
+        {
+            return false;
+        }
+
+        return cellValue.Contains("交易日期", StringComparison.OrdinalIgnoreCase)
+               || cellValue.Contains("日期", StringComparison.OrdinalIgnoreCase)
+               || cellValue.Contains("时间", StringComparison.OrdinalIgnoreCase)
+               || cellValue.Contains("金额", StringComparison.OrdinalIgnoreCase);
     }
 }

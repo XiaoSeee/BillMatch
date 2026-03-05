@@ -1,32 +1,139 @@
-# BillMatch
+﻿# BillMatch.Wpf
 
-BillMatch 是一个从 Python 移植到 .NET 8 WPF 的账单匹配工具。它旨在提供更快的处理速度和更好的用户体验。
+BillMatch.Wpf 是一个 Windows 桌面对账工具，用于比对**钱迹导出账单**与**银行账单**，快速找出漏记、多记或不一致的交易。
 
-## 项目特点
+---
 
-- **高性能**: 使用 .NET 8 构建，处理大型 Excel 文件更加高效。
-- **独立运行**: 支持 Self-contained 发布，无需安装 .NET 运行时。
-- **体积优化**: 启用剪裁 (Trimming) 和单文件发布，减小分发体积。
+## 1. 核心能力
 
-## 运行方式
+- 读取 Excel 文件（支持 `.xls/.xlsx/.xlsm`，支持多账单文件合并）
+- 可配置列映射（使用 Excel 列名：`A`、`B`、`AA`）
+- 自动检测银行账单日期范围并回填到对账区间
+- 按卡号末四位过滤
+- 按金额与日期容差进行智能匹配
+- 输出三类结果：漏记账单、已匹配、冗余记账
+- 运行日志支持复制与清空
 
-1. 确保已安装 [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)。
-2. 在项目根目录下运行：
-   ```bash
-   dotnet run --project BillMatch.Wpf
-   ```
+---
 
-## 打包说明
+## 2. 技术栈
 
-项目提供了 `publish.bat` 脚本用于快速打包：
+- .NET 8（`net8.0-windows`）
+- WPF
+- CommunityToolkit.Mvvm
+- EPPlus `4.5.3.3`（LGPL）
+- NLog（项目中已实现日志服务，当前主流程主要使用 UI 内置日志）
 
-1. 双击运行 `publish.bat`。
-2. 发布后的文件将位于 `BillMatch.Wpf\bin\Release\net8.0-windows\win-x64\publish\` 目录下。
-3. `BillMatch.Wpf.exe` 是一个独立的单文件可执行程序。
+---
 
-## 技术栈
+## 3. 目录结构
 
-- .NET 8 (WPF)
-- CommunityToolkit.Mvvm (MVVM 框架)
-- EPPlus (Excel 处理)
-- Microsoft.Extensions.DependencyInjection (依赖注入)
+```text
+BillMatch/
+├── BillMatch.Wpf/               # 主程序（WPF）
+│   ├── Models/                  # 数据模型
+│   ├── Services/                # Excel读取/列名转换/日志服务
+│   ├── ViewModels/              # 主业务逻辑（MainViewModel）
+│   ├── MainWindow.xaml          # 主界面
+│   └── BillMatch.Wpf.csproj
+├── BillMatch.Wpf.Tests/         # xUnit 测试项目
+├── app.py                       # 旧版 Python 参考实现
+└── publish.bat                  # 发布脚本
+```
+
+---
+
+## 4. 运行环境
+
+- Windows 10/11
+- .NET 8 SDK（开发/运行源码时需要）
+
+---
+
+## 5. 本地运行
+
+在项目根目录执行：
+
+```bash
+dotnet run --project BillMatch.Wpf/BillMatch.Wpf.csproj
+```
+
+---
+
+## 6. 使用说明（UI）
+
+1. 选择钱迹导出文件（支持 `.xls/.xlsx/.xlsm`）
+2. 选择一个或多个银行账单文件
+3. 检查自动识别的对账日期范围
+4. 设置目标卡号末四位（可留空）
+5. 根据导出格式确认列映射
+6. 点击“开始对账”
+7. 在“漏记账单 / 已匹配 / 冗余记账 / 运行日志”标签页查看结果
+
+---
+
+## 7. 默认列映射（当前代码默认值）
+
+### 钱迹文件
+
+- 日期：`B`
+- 金额：`F`
+- 账户1：`H`
+- 账户2：`I`
+- 描述：`J`
+
+### 银行账单文件
+
+- 日期：`A`
+- 金额：`G`
+- 卡号：`D`
+- 描述：`C`
+
+> 列映射使用 Excel 列名字母，不是数字索引。
+
+---
+
+## 8. 匹配规则
+
+- 金额：按绝对值比较（忽略正负方向差异）
+- 日期：允许 `DaysTolerance` 天范围内匹配（默认 2 天）
+- 唯一性：一条钱迹记录最多匹配一条账单
+- 最优选择：候选中优先选择与账单日期最接近的一条
+
+---
+
+## 9. 打包发布
+
+在项目根目录执行：
+
+```bat
+publish.bat
+```
+
+脚本会：
+
+1. 执行 `dotnet publish`（`Release` + `win-x64` + 单文件）
+2. 从发布目录复制产物
+3. 在项目根目录生成 `BillMatch.exe`
+
+发布目录原始产物路径：
+
+`BillMatch.Wpf\bin\Release\net8.0-windows\win-x64\publish\BillMatch.Wpf.exe`
+
+---
+
+## 10. 测试
+
+运行测试：
+
+```bash
+dotnet test BillMatch.Wpf.Tests/BillMatch.Wpf.Tests.csproj
+```
+
+---
+
+## 11. 已知限制
+
+- `.xls` 为兼容读取模式（仅读取，不涉及写回与格式转换）
+- 当前默认读取每个文件的第一个工作表
+- 表头识别为启发式逻辑（前 5 行内按关键词检测）

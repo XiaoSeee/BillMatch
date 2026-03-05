@@ -1,7 +1,8 @@
+using System.IO;
 using BillMatch.Wpf.Models;
 using BillMatch.Wpf.Services;
+using NPOI.HSSF.UserModel;
 using OfficeOpenXml;
-using System.IO;
 using Xunit;
 
 namespace BillMatch.Wpf.Tests;
@@ -16,10 +17,8 @@ public class ExcelServiceTests
     [InlineData("2023-10-03", 2023, 10, 3)]
     public void NormalizeDate_ShouldReturnDateOnly(string input, int year, int month, int day)
     {
-        // Act
         var result = _service.NormalizeDate(input);
 
-        // Assert
         Assert.Equal(new DateTime(year, month, day), result);
         Assert.Equal(TimeSpan.Zero, result.TimeOfDay);
     }
@@ -27,26 +26,20 @@ public class ExcelServiceTests
     [Fact]
     public void NormalizeDate_WithDateTime_ShouldReturnDateOnly()
     {
-        // Arrange
         var input = new DateTime(2023, 10, 1, 15, 30, 0);
 
-        // Act
         var result = _service.NormalizeDate(input);
 
-        // Assert
         Assert.Equal(new DateTime(2023, 10, 1), result);
     }
 
     [Fact]
     public void NormalizeDate_WithExcelSerialNumber_ShouldReturnDateOnly()
     {
-        // Arrange
-        const double excelSerial = 46066.5208333333d; // 2026-02-13 12:30:00
+        const double excelSerial = 46066.5208333333d;
 
-        // Act
         var result = _service.NormalizeDate(excelSerial);
 
-        // Assert
         Assert.Equal(new DateTime(2026, 2, 13), result);
     }
 
@@ -54,14 +47,12 @@ public class ExcelServiceTests
     [InlineData("￥1,234.56", 1234.56)]
     [InlineData("1234.56", 1234.56)]
     [InlineData("-1234.56", -1234.56)]
-    [InlineData("￥-1,234.56", -1234.56)]
+    [InlineData("¥-1,234.56", -1234.56)]
     [InlineData(1234.56, 1234.56)]
     public void NormalizeAmount_ShouldHandleVariousFormats(object input, double expected)
     {
-        // Act
         var result = _service.NormalizeAmount(input);
 
-        // Assert
         Assert.Equal((decimal)expected, result);
     }
 
@@ -73,29 +64,96 @@ public class ExcelServiceTests
     [InlineData("123", null)]
     public void ExtractCardTail_ShouldExtractLastFourDigits(object input, string? expected)
     {
-        // Act
         var result = _service.ExtractCardTail(input);
 
-        // Assert
         Assert.Equal(expected, result);
     }
 
     [Fact]
-    public void LoadExcel_WithXlsExtension_ShouldThrowNotSupportedException()
+    public void LoadExcel_WithXlsFile_ShouldReadRows()
     {
-        // Arrange
         var tempFilePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.xls");
-        File.WriteAllText(tempFilePath, "dummy");
 
         try
         {
-            // Act
-            var ex = Assert.Throws<NotSupportedException>(() =>
-                _service.LoadExcel(tempFilePath, new ExcelMapping()));
+            var workbook = new HSSFWorkbook();
+            var worksheet = workbook.CreateSheet("Sheet1");
 
-            // Assert
-            Assert.Contains(".xls", ex.Message);
-            Assert.Contains(".xlsx", ex.Message);
+            var header = worksheet.CreateRow(0);
+            header.CreateCell(0).SetCellValue("ID");
+            header.CreateCell(1).SetCellValue("时间");
+            header.CreateCell(5).SetCellValue("金额");
+            header.CreateCell(7).SetCellValue("账户1");
+            header.CreateCell(8).SetCellValue("账户2");
+            header.CreateCell(9).SetCellValue("备注");
+
+            var row = worksheet.CreateRow(1);
+            row.CreateCell(0).SetCellValue("qj-1");
+            row.CreateCell(1).SetCellValue("2026-02-13 12:30:00");
+            row.CreateCell(5).SetCellValue(14.25d);
+            row.CreateCell(7).SetCellValue("中信 8820");
+            row.CreateCell(8).SetCellValue("");
+            row.CreateCell(9).SetCellValue("午餐");
+
+            using (var stream = File.Create(tempFilePath))
+            {
+                workbook.Write(stream);
+            }
+
+            var mapping = new ExcelMapping
+            {
+                DateColumn = "B",
+                AmountColumn = "F",
+                Account1Column = "H",
+                Account2Column = "I",
+                DescriptionColumn = "J"
+            };
+
+            var result = _service.LoadExcel(tempFilePath, mapping);
+
+            Assert.Single(result);
+            Assert.Equal(new DateTime(2026, 2, 13), result[0].Date);
+            Assert.Equal(14.25m, result[0].Amount);
+            Assert.Equal("中信 8820", result[0].Account1);
+            Assert.Equal("午餐", result[0].Description);
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
+        }
+    }
+
+    [Fact]
+    public void GetDateRange_WithXlsFile_ShouldReturnMinAndMaxDate()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.xls");
+
+        try
+        {
+            var workbook = new HSSFWorkbook();
+            var worksheet = workbook.CreateSheet("Sheet1");
+
+            var header = worksheet.CreateRow(0);
+            header.CreateCell(1).SetCellValue("交易日期");
+
+            var row1 = worksheet.CreateRow(1);
+            row1.CreateCell(1).SetCellValue("2026-02-11");
+
+            var row2 = worksheet.CreateRow(2);
+            row2.CreateCell(1).SetCellValue("2026-02-13");
+
+            using (var stream = File.Create(tempFilePath))
+            {
+                workbook.Write(stream);
+            }
+
+            var (minDate, maxDate) = _service.GetDateRange(tempFilePath, "B");
+
+            Assert.Equal(new DateTime(2026, 2, 11), minDate);
+            Assert.Equal(new DateTime(2026, 2, 13), maxDate);
         }
         finally
         {
@@ -109,7 +167,6 @@ public class ExcelServiceTests
     [Fact]
     public void LoadExcel_WithQianJiLikeColumnsAndCorrectMapping_ShouldReadRows()
     {
-        // Arrange
         var tempFilePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.xlsx");
 
         try
@@ -138,17 +195,15 @@ public class ExcelServiceTests
 
             var mapping = new ExcelMapping
             {
-                DateColumn = 2,
-                AmountColumn = 6,
-                Account1Column = 8,
-                Account2Column = 9,
-                DescriptionColumn = 10
+                DateColumn = "B",
+                AmountColumn = "F",
+                Account1Column = "H",
+                Account2Column = "I",
+                DescriptionColumn = "J"
             };
 
-            // Act
             var result = _service.LoadExcel(tempFilePath, mapping);
 
-            // Assert
             Assert.Single(result);
             Assert.Equal(new DateTime(2026, 2, 13), result[0].Date);
             Assert.Equal(14.25m, result[0].Amount);
@@ -167,7 +222,6 @@ public class ExcelServiceTests
     [Fact]
     public void LoadExcel_WithQianJiLikeColumnsAndOldMapping_ShouldReturnZeroRows()
     {
-        // Arrange
         var tempFilePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.xlsx");
 
         try
@@ -189,17 +243,15 @@ public class ExcelServiceTests
 
             var oldMapping = new ExcelMapping
             {
-                DateColumn = 1,
-                AmountColumn = 2,
-                Account1Column = 3,
-                Account2Column = 4,
-                DescriptionColumn = 5
+                DateColumn = "A",
+                AmountColumn = "B",
+                Account1Column = "C",
+                Account2Column = "D",
+                DescriptionColumn = "E"
             };
 
-            // Act
             var result = _service.LoadExcel(tempFilePath, oldMapping);
 
-            // Assert
             Assert.Empty(result);
         }
         finally

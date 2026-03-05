@@ -7,6 +7,7 @@
         xmlns:vm="clr-namespace:BillMatch.Wpf.ViewModels"
         mc:Ignorable="d"
         Title="BillMatch - 账单对账工具" Height="600" Width="1100"
+        Icon="Resources/AppIcon.ico"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel, IsDesignTimeCreatable=True}">
     
     <Grid>
