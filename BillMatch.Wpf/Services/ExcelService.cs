@@ -1,6 +1,8 @@
 using System.IO;
+using System.Text;
 using System.Text.RegularExpressions;
 using BillMatch.Wpf.Models;
+using Microsoft.VisualBasic.FileIO;
 using NPOI.HSSF.UserModel;
 using NPOI.SS.UserModel;
 using OfficeOpenXml;
@@ -19,13 +21,21 @@ public class ExcelService : IExcelService
 
         try
         {
-            return IsXls(fileInfo.Extension)
-                ? LoadXls(fileInfo, mapping)
-                : LoadOpenXml(fileInfo, mapping);
+            if (IsCsv(fileInfo.Extension))
+            {
+                return LoadCsv(fileInfo, mapping);
+            }
+
+            if (IsXls(fileInfo.Extension))
+            {
+                return LoadXls(fileInfo, mapping);
+            }
+
+            return LoadOpenXml(fileInfo, mapping);
         }
         catch (Exception ex)
         {
-            throw new Exception($"解析 Excel 文件时出错({Path.GetFileName(filePath)}): {ex.Message}", ex);
+            throw new Exception($"解析文件时出错({Path.GetFileName(filePath)}): {ex.Message}", ex);
         }
     }
 
@@ -39,9 +49,17 @@ public class ExcelService : IExcelService
 
         try
         {
-            return IsXls(fileInfo.Extension)
-                ? GetDateRangeFromXls(fileInfo, dateColumn)
-                : GetDateRangeFromOpenXml(fileInfo, dateColumn);
+            if (IsCsv(fileInfo.Extension))
+            {
+                return GetDateRangeFromCsv(fileInfo, dateColumn);
+            }
+
+            if (IsXls(fileInfo.Extension))
+            {
+                return GetDateRangeFromXls(fileInfo, dateColumn);
+            }
+
+            return GetDateRangeFromOpenXml(fileInfo, dateColumn);
         }
         catch
         {
@@ -51,9 +69,9 @@ public class ExcelService : IExcelService
 
     internal int FindHeaderRow(ExcelWorksheet worksheet)
     {
-        for (int row = 1; row <= Math.Min(5, worksheet.Dimension.End.Row); row++)
+        for (var row = 1; row <= Math.Min(5, worksheet.Dimension.End.Row); row++)
         {
-            for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
+            for (var col = 1; col <= worksheet.Dimension.End.Column; col++)
             {
                 var cellValue = worksheet.Cells[row, col].Value?.ToString();
                 if (IsHeaderKeyword(cellValue))
@@ -70,7 +88,7 @@ public class ExcelService : IExcelService
     {
         var maxScanRow = Math.Min(4, sheet.LastRowNum);
 
-        for (int rowIndex = 0; rowIndex <= maxScanRow; rowIndex++)
+        for (var rowIndex = 0; rowIndex <= maxScanRow; rowIndex++)
         {
             var row = sheet.GetRow(rowIndex);
             if (row == null)
@@ -78,7 +96,7 @@ public class ExcelService : IExcelService
                 continue;
             }
 
-            for (int colIndex = row.FirstCellNum; colIndex < row.LastCellNum; colIndex++)
+            for (var colIndex = row.FirstCellNum; colIndex < row.LastCellNum; colIndex++)
             {
                 if (colIndex < 0)
                 {
@@ -96,9 +114,30 @@ public class ExcelService : IExcelService
         return 0;
     }
 
+    internal int FindHeaderRow(IReadOnlyList<string[]> rows)
+    {
+        var maxScanRow = Math.Min(4, rows.Count - 1);
+
+        for (var rowIndex = 0; rowIndex <= maxScanRow; rowIndex++)
+        {
+            foreach (var field in rows[rowIndex])
+            {
+                if (IsHeaderKeyword(field))
+                {
+                    return rowIndex;
+                }
+            }
+        }
+
+        return 0;
+    }
+
     internal DateTime NormalizeDate(object value)
     {
-        if (value == null) return default;
+        if (value == null)
+        {
+            return default;
+        }
 
         if (value is double oaDouble)
         {
@@ -129,19 +168,9 @@ public class ExcelService : IExcelService
             return dt.Date;
         }
 
-        if (value is string str)
+        if (DateTime.TryParse(value.ToString(), out var parsedDate))
         {
-            if (DateTime.TryParse(str, out var parsedDate))
-            {
-                return parsedDate.Date;
-            }
-        }
-        else
-        {
-            if (DateTime.TryParse(value.ToString(), out var parsedDate))
-            {
-                return parsedDate.Date;
-            }
+            return parsedDate.Date;
         }
 
         return default;
@@ -149,7 +178,10 @@ public class ExcelService : IExcelService
 
     internal decimal NormalizeAmount(object value)
     {
-        if (value == null) return 0m;
+        if (value == null)
+        {
+            return 0m;
+        }
 
         if (value is decimal dec) return dec;
         if (value is double dbl) return (decimal)dbl;
@@ -158,10 +190,10 @@ public class ExcelService : IExcelService
         if (value is long l) return l;
 
         var strVal = value.ToString() ?? string.Empty;
-        strVal = strVal.Replace("￥", "")
-            .Replace("¥", "")
-            .Replace(",", "")
-            .Replace("元", "")
+        strVal = strVal.Replace("￥", string.Empty)
+            .Replace("¥", string.Empty)
+            .Replace(",", string.Empty)
+            .Replace("元", string.Empty)
             .Trim();
 
         return decimal.TryParse(strVal, out var amount) ? amount : 0m;
@@ -169,7 +201,10 @@ public class ExcelService : IExcelService
 
     internal string? ExtractCardTail(object value)
     {
-        if (value == null) return null;
+        if (value == null)
+        {
+            return null;
+        }
 
         string valueStr;
 
@@ -194,8 +229,7 @@ public class ExcelService : IExcelService
             valueStr = value.ToString() ?? string.Empty;
         }
 
-        var digits = Regex.Replace(valueStr, @"\D", "");
-
+        var digits = Regex.Replace(valueStr, @"\D", string.Empty);
         return digits.Length >= 4 ? digits.Substring(digits.Length - 4) : null;
     }
 
@@ -227,63 +261,17 @@ public class ExcelService : IExcelService
 
         for (var row = startRow; row <= worksheet.Dimension.End.Row; row++)
         {
-            var transaction = new Transaction();
+            var transaction = CreateTransactionFromOpenXmlRow(
+                worksheet,
+                row,
+                dateCol,
+                amountCol,
+                cardCol,
+                descCol,
+                acc1Col,
+                acc2Col);
 
-            if (dateCol <= worksheet.Dimension.End.Column)
-            {
-                var value = worksheet.Cells[row, dateCol].Value;
-                if (value != null)
-                {
-                    transaction.Date = NormalizeDate(value);
-                }
-            }
-
-            if (amountCol <= worksheet.Dimension.End.Column)
-            {
-                var value = worksheet.Cells[row, amountCol].Value;
-                if (value != null)
-                {
-                    transaction.Amount = NormalizeAmount(value);
-                }
-            }
-
-            if (cardCol.HasValue && cardCol.Value <= worksheet.Dimension.End.Column)
-            {
-                var value = worksheet.Cells[row, cardCol.Value].Value;
-                if (value != null)
-                {
-                    transaction.CardNumber = ExtractCardTail(value);
-                }
-            }
-
-            if (descCol.HasValue && descCol.Value <= worksheet.Dimension.End.Column)
-            {
-                var value = worksheet.Cells[row, descCol.Value].Value;
-                if (value != null)
-                {
-                    transaction.Description = value.ToString();
-                }
-            }
-
-            if (acc1Col.HasValue && acc1Col.Value <= worksheet.Dimension.End.Column)
-            {
-                var value = worksheet.Cells[row, acc1Col.Value].Value;
-                if (value != null)
-                {
-                    transaction.Account1 = value.ToString();
-                }
-            }
-
-            if (acc2Col.HasValue && acc2Col.Value <= worksheet.Dimension.End.Column)
-            {
-                var value = worksheet.Cells[row, acc2Col.Value].Value;
-                if (value != null)
-                {
-                    transaction.Account2 = value.ToString();
-                }
-            }
-
-            if (transaction.Date != default || transaction.Amount != 0)
+            if (IsValidTransaction(transaction))
             {
                 transactions.Add(transaction);
             }
@@ -327,57 +315,56 @@ public class ExcelService : IExcelService
                 continue;
             }
 
-            var transaction = new Transaction();
+            var transaction = CreateTransactionFromXlsRow(
+                row,
+                dateCol,
+                amountCol,
+                cardCol,
+                descCol,
+                acc1Col,
+                acc2Col);
 
-            var dateValue = GetCellValue(row.GetCell(dateCol));
-            if (dateValue != null)
+            if (IsValidTransaction(transaction))
             {
-                transaction.Date = NormalizeDate(dateValue);
+                transactions.Add(transaction);
             }
+        }
 
-            var amountValue = GetCellValue(row.GetCell(amountCol));
-            if (amountValue != null)
-            {
-                transaction.Amount = NormalizeAmount(amountValue);
-            }
+        return transactions;
+    }
 
-            if (cardCol.HasValue)
-            {
-                var cardValue = GetCellValue(row.GetCell(cardCol.Value));
-                if (cardValue != null)
-                {
-                    transaction.CardNumber = ExtractCardTail(cardValue);
-                }
-            }
+    private List<Transaction> LoadCsv(FileInfo fileInfo, ExcelMapping mapping)
+    {
+        var transactions = new List<Transaction>();
+        var rows = ReadCsvRows(fileInfo);
+        if (rows.Count == 0)
+        {
+            return transactions;
+        }
 
-            if (descCol.HasValue)
-            {
-                var descValue = GetCellValue(row.GetCell(descCol.Value));
-                if (descValue != null)
-                {
-                    transaction.Description = descValue.ToString();
-                }
-            }
+        var headerRowIndex = FindHeaderRow(rows);
+        var startRowIndex = headerRowIndex + 1;
 
-            if (acc1Col.HasValue)
-            {
-                var acc1Value = GetCellValue(row.GetCell(acc1Col.Value));
-                if (acc1Value != null)
-                {
-                    transaction.Account1 = acc1Value.ToString();
-                }
-            }
+        var dateCol = ExcelColumnHelper.ColumnNameToIndex(mapping.DateColumn);
+        var amountCol = ExcelColumnHelper.ColumnNameToIndex(mapping.AmountColumn);
+        var cardCol = TryGetColumnIndex(mapping.CardColumn, oneBased: false);
+        var descCol = TryGetColumnIndex(mapping.DescriptionColumn, oneBased: false);
+        var acc1Col = TryGetColumnIndex(mapping.Account1Column, oneBased: false);
+        var acc2Col = TryGetColumnIndex(mapping.Account2Column, oneBased: false);
 
-            if (acc2Col.HasValue)
-            {
-                var acc2Value = GetCellValue(row.GetCell(acc2Col.Value));
-                if (acc2Value != null)
-                {
-                    transaction.Account2 = acc2Value.ToString();
-                }
-            }
+        for (var rowIndex = startRowIndex; rowIndex < rows.Count; rowIndex++)
+        {
+            var row = rows[rowIndex];
+            var transaction = CreateTransactionFromCsvRow(
+                row,
+                dateCol,
+                amountCol,
+                cardCol,
+                descCol,
+                acc1Col,
+                acc2Col);
 
-            if (transaction.Date != default || transaction.Amount != 0)
+            if (IsValidTransaction(transaction))
             {
                 transactions.Add(transaction);
             }
@@ -415,26 +402,7 @@ public class ExcelService : IExcelService
         for (var row = startRow; row <= worksheet.Dimension.End.Row; row++)
         {
             var cellValue = worksheet.Cells[row, dateCol].Value;
-            if (cellValue == null)
-            {
-                continue;
-            }
-
-            var date = NormalizeDate(cellValue);
-            if (date == default)
-            {
-                continue;
-            }
-
-            if (!minDate.HasValue || date < minDate.Value)
-            {
-                minDate = date;
-            }
-
-            if (!maxDate.HasValue || date > maxDate.Value)
-            {
-                maxDate = date;
-            }
+            UpdateDateRange(cellValue, ref minDate, ref maxDate);
         }
 
         return (minDate, maxDate);
@@ -470,30 +438,216 @@ public class ExcelService : IExcelService
                 continue;
             }
 
-            var value = GetCellValue(row.GetCell(dateCol));
-            if (value == null)
-            {
-                continue;
-            }
-
-            var date = NormalizeDate(value);
-            if (date == default)
-            {
-                continue;
-            }
-
-            if (!minDate.HasValue || date < minDate.Value)
-            {
-                minDate = date;
-            }
-
-            if (!maxDate.HasValue || date > maxDate.Value)
-            {
-                maxDate = date;
-            }
+            UpdateDateRange(GetCellValue(row.GetCell(dateCol)), ref minDate, ref maxDate);
         }
 
         return (minDate, maxDate);
+    }
+
+    private (DateTime? MinDate, DateTime? MaxDate) GetDateRangeFromCsv(FileInfo fileInfo, string dateColumn)
+    {
+        DateTime? minDate = null;
+        DateTime? maxDate = null;
+
+        var rows = ReadCsvRows(fileInfo);
+        if (rows.Count == 0)
+        {
+            return (null, null);
+        }
+
+        var dateCol = ExcelColumnHelper.ColumnNameToIndex(dateColumn);
+        var headerRowIndex = FindHeaderRow(rows);
+        var startRowIndex = headerRowIndex + 1;
+
+        for (var rowIndex = startRowIndex; rowIndex < rows.Count; rowIndex++)
+        {
+            UpdateDateRange(GetCsvField(rows[rowIndex], dateCol), ref minDate, ref maxDate);
+        }
+
+        return (minDate, maxDate);
+    }
+
+    private Transaction CreateTransactionFromOpenXmlRow(
+        ExcelWorksheet worksheet,
+        int row,
+        int dateCol,
+        int amountCol,
+        int? cardCol,
+        int? descCol,
+        int? acc1Col,
+        int? acc2Col)
+    {
+        var transaction = new Transaction();
+
+        var dateValue = worksheet.Cells[row, dateCol].Value;
+        if (dateValue != null)
+        {
+            transaction.Date = NormalizeDate(dateValue);
+        }
+
+        var amountValue = worksheet.Cells[row, amountCol].Value;
+        if (amountValue != null)
+        {
+            transaction.Amount = NormalizeAmount(amountValue);
+        }
+
+        if (cardCol.HasValue)
+        {
+            var cardValue = worksheet.Cells[row, cardCol.Value].Value;
+            if (cardValue != null)
+            {
+                transaction.CardNumber = ExtractCardTail(cardValue);
+            }
+        }
+
+        if (descCol.HasValue)
+        {
+            transaction.Description = worksheet.Cells[row, descCol.Value].Value?.ToString();
+        }
+
+        if (acc1Col.HasValue)
+        {
+            transaction.Account1 = worksheet.Cells[row, acc1Col.Value].Value?.ToString();
+        }
+
+        if (acc2Col.HasValue)
+        {
+            transaction.Account2 = worksheet.Cells[row, acc2Col.Value].Value?.ToString();
+        }
+
+        return transaction;
+    }
+
+    private Transaction CreateTransactionFromXlsRow(
+        IRow row,
+        int dateCol,
+        int amountCol,
+        int? cardCol,
+        int? descCol,
+        int? acc1Col,
+        int? acc2Col)
+    {
+        var transaction = new Transaction();
+
+        var dateValue = GetCellValue(row.GetCell(dateCol));
+        if (dateValue != null)
+        {
+            transaction.Date = NormalizeDate(dateValue);
+        }
+
+        var amountValue = GetCellValue(row.GetCell(amountCol));
+        if (amountValue != null)
+        {
+            transaction.Amount = NormalizeAmount(amountValue);
+        }
+
+        if (cardCol.HasValue)
+        {
+            var cardValue = GetCellValue(row.GetCell(cardCol.Value));
+            if (cardValue != null)
+            {
+                transaction.CardNumber = ExtractCardTail(cardValue);
+            }
+        }
+
+        if (descCol.HasValue)
+        {
+            transaction.Description = GetCellValue(row.GetCell(descCol.Value))?.ToString();
+        }
+
+        if (acc1Col.HasValue)
+        {
+            transaction.Account1 = GetCellValue(row.GetCell(acc1Col.Value))?.ToString();
+        }
+
+        if (acc2Col.HasValue)
+        {
+            transaction.Account2 = GetCellValue(row.GetCell(acc2Col.Value))?.ToString();
+        }
+
+        return transaction;
+    }
+
+    private Transaction CreateTransactionFromCsvRow(
+        string[] row,
+        int dateCol,
+        int amountCol,
+        int? cardCol,
+        int? descCol,
+        int? acc1Col,
+        int? acc2Col)
+    {
+        var transaction = new Transaction();
+
+        var dateValue = GetCsvField(row, dateCol);
+        if (!string.IsNullOrWhiteSpace(dateValue))
+        {
+            transaction.Date = NormalizeDate(dateValue);
+        }
+
+        var amountValue = GetCsvField(row, amountCol);
+        if (!string.IsNullOrWhiteSpace(amountValue))
+        {
+            transaction.Amount = NormalizeAmount(amountValue);
+        }
+
+        var cardValue = GetCsvField(row, cardCol);
+        if (!string.IsNullOrWhiteSpace(cardValue))
+        {
+            transaction.CardNumber = ExtractCardTail(cardValue);
+        }
+
+        transaction.Description = GetCsvField(row, descCol);
+        transaction.Account1 = GetCsvField(row, acc1Col);
+        transaction.Account2 = GetCsvField(row, acc2Col);
+
+        return transaction;
+    }
+
+    private void UpdateDateRange(object? value, ref DateTime? minDate, ref DateTime? maxDate)
+    {
+        if (value == null)
+        {
+            return;
+        }
+
+        var date = NormalizeDate(value);
+        if (date == default)
+        {
+            return;
+        }
+
+        if (!minDate.HasValue || date < minDate.Value)
+        {
+            minDate = date;
+        }
+
+        if (!maxDate.HasValue || date > maxDate.Value)
+        {
+            maxDate = date;
+        }
+    }
+
+    private static List<string[]> ReadCsvRows(FileInfo fileInfo)
+    {
+        var rows = new List<string[]>();
+
+        using var parser = new TextFieldParser(fileInfo.FullName, Encoding.UTF8, detectEncoding: true);
+        parser.TextFieldType = FieldType.Delimited;
+        parser.SetDelimiters(",");
+        parser.HasFieldsEnclosedInQuotes = true;
+        parser.TrimWhiteSpace = false;
+
+        while (!parser.EndOfData)
+        {
+            var fields = parser.ReadFields();
+            if (fields != null)
+            {
+                rows.Add(fields);
+            }
+        }
+
+        return rows;
     }
 
     private static object? GetCellValue(ICell? cell)
@@ -520,6 +674,23 @@ public class ExcelService : IExcelService
         };
     }
 
+    private static string? GetCsvField(IReadOnlyList<string> row, int? index)
+    {
+        if (!index.HasValue || index.Value < 0 || index.Value >= row.Count)
+        {
+            return null;
+        }
+
+        var value = row[index.Value];
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private static bool IsValidTransaction(Transaction transaction) =>
+        transaction.Date != default || transaction.Amount != 0;
+
+    private static bool IsCsv(string extension) =>
+        string.Equals(extension, ".csv", StringComparison.OrdinalIgnoreCase);
+
     private static bool IsXls(string extension) =>
         string.Equals(extension, ".xls", StringComparison.OrdinalIgnoreCase);
 
@@ -542,8 +713,8 @@ public class ExcelService : IExcelService
         }
 
         return cellValue.Contains("交易日期", StringComparison.OrdinalIgnoreCase)
-               || cellValue.Contains("日期", StringComparison.OrdinalIgnoreCase)
-               || cellValue.Contains("时间", StringComparison.OrdinalIgnoreCase)
-               || cellValue.Contains("金额", StringComparison.OrdinalIgnoreCase);
+            || cellValue.Contains("日期", StringComparison.OrdinalIgnoreCase)
+            || cellValue.Contains("时间", StringComparison.OrdinalIgnoreCase)
+            || cellValue.Contains("金额", StringComparison.OrdinalIgnoreCase);
     }
 }

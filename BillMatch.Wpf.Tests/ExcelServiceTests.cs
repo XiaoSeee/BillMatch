@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using BillMatch.Wpf.Models;
 using BillMatch.Wpf.Services;
 using NPOI.HSSF.UserModel;
@@ -70,6 +71,79 @@ public class ExcelServiceTests
     }
 
     [Fact]
+    public void LoadExcel_WithQianJiCsvAndDefaultMapping_ShouldReadRows()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.csv");
+
+        try
+        {
+            var csvContent = string.Join(Environment.NewLine, new[]
+            {
+                "\"ID\",\"时间\",\"分类\",\"二级分类\",\"类型\",\"金额\",\"币种\",\"账户1\",\"账户2\",\"备注\"",
+                "\"qj-1\",\"2026-02-12 12:21:10\",\"伙食\",\"三餐\",\"支出\",\"14.0\",\"CNY\",\"中信 8820\",,\"重庆小面\"",
+                "\"qj-2\",\"2026-02-12 09:20:55\",\"日常\",\"付费会员\",\"支出\",\"8.06\",\"CNY\",\"中信 8820\",,\"火山引擎\""
+            });
+
+            File.WriteAllText(tempFilePath, csvContent, new UTF8Encoding(true));
+
+            var mapping = new ExcelMapping
+            {
+                DateColumn = "B",
+                AmountColumn = "F",
+                Account1Column = "H",
+                Account2Column = "I",
+                DescriptionColumn = "J"
+            };
+
+            var result = _service.LoadExcel(tempFilePath, mapping);
+
+            Assert.Equal(2, result.Count);
+            Assert.Equal(new DateTime(2026, 2, 12), result[0].Date);
+            Assert.Equal(14.0m, result[0].Amount);
+            Assert.Equal("中信 8820", result[0].Account1);
+            Assert.Equal("重庆小面", result[0].Description);
+            Assert.Null(result[0].Account2);
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
+        }
+    }
+
+    [Fact]
+    public void GetDateRange_WithCsvFile_ShouldReturnMinAndMaxDate()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.csv");
+
+        try
+        {
+            var csvContent = string.Join(Environment.NewLine, new[]
+            {
+                "\"ID\",\"时间\",\"分类\",\"二级分类\",\"类型\",\"金额\",\"币种\",\"账户1\",\"账户2\",\"备注\"",
+                "\"qj-1\",\"2026-02-11 19:44:00\",\"购物\",\"数码\",\"支出\",\"120.81\",\"CNY\",\"招商 0273\",,\"OPPO Find X8\"",
+                "\"qj-2\",\"2026-02-13 09:20:55\",\"日常\",\"付费会员\",\"支出\",\"8.06\",\"CNY\",\"中信 8820\",,\"火山引擎\""
+            });
+
+            File.WriteAllText(tempFilePath, csvContent, new UTF8Encoding(true));
+
+            var (minDate, maxDate) = _service.GetDateRange(tempFilePath, "B");
+
+            Assert.Equal(new DateTime(2026, 2, 11), minDate);
+            Assert.Equal(new DateTime(2026, 2, 13), maxDate);
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
+        }
+    }
+
+    [Fact]
     public void LoadExcel_WithXlsFile_ShouldReadRows()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.xls");
@@ -92,7 +166,7 @@ public class ExcelServiceTests
             row.CreateCell(1).SetCellValue("2026-02-13 12:30:00");
             row.CreateCell(5).SetCellValue(14.25d);
             row.CreateCell(7).SetCellValue("中信 8820");
-            row.CreateCell(8).SetCellValue("");
+            row.CreateCell(8).SetCellValue(string.Empty);
             row.CreateCell(9).SetCellValue("午餐");
 
             using (var stream = File.Create(tempFilePath))
@@ -187,7 +261,7 @@ public class ExcelServiceTests
                 worksheet.Cells[2, 2].Style.Numberformat.Format = "yyyy-mm-dd hh:mm:ss";
                 worksheet.Cells[2, 6].Value = 14.25m;
                 worksheet.Cells[2, 8].Value = "中信 8820";
-                worksheet.Cells[2, 9].Value = "";
+                worksheet.Cells[2, 9].Value = string.Empty;
                 worksheet.Cells[2, 10].Value = "午餐";
 
                 package.SaveAs(new FileInfo(tempFilePath));

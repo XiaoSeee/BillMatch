@@ -98,7 +98,7 @@ public partial class MainViewModel : ObservableObject
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "Excel 文件 (*.xlsx;*.xlsm;*.xls)|*.xlsx;*.xlsm;*.xls|所有文件 (*.*)|*.*",
+            Filter = "支持的文件 (*.csv;*.xlsx;*.xlsm;*.xls)|*.csv;*.xlsx;*.xlsm;*.xls|所有文件 (*.*)|*.*",
             Title = "选择钱迹导出文件"
         };
 
@@ -116,7 +116,7 @@ public partial class MainViewModel : ObservableObject
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "Excel 文件 (*.xlsx;*.xlsm;*.xls)|*.xlsx;*.xlsm;*.xls|所有文件 (*.*)|*.*",
+            Filter = "支持的文件 (*.csv;*.xlsx;*.xlsm;*.xls)|*.csv;*.xlsx;*.xlsm;*.xls|所有文件 (*.*)|*.*",
             Title = "选择银行账单文件",
             Multiselect = true
         };
