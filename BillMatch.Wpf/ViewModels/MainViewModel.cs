@@ -43,16 +43,16 @@ public partial class MainViewModel : ObservableObject
     private string _qianjiDateColumn = "B";
 
     [ObservableProperty]
-    private string _qianjiAmountColumn = "F";
+    private string _qianjiAmountColumn = "G";
 
     [ObservableProperty]
-    private string _qianjiAccount1Column = "H";
+    private string _qianjiAccount1Column = "I";
 
     [ObservableProperty]
-    private string _qianjiAccount2Column = "I";
+    private string _qianjiAccount2Column = "J";
 
     [ObservableProperty]
-    private string _qianjiDescriptionColumn = "J";
+    private string _qianjiDescriptionColumn = "K";
 
     // 列映射配置 - 账单 (使用Excel列名如 "A", "G")
     [ObservableProperty]

@@ -1,4 +1,4 @@
-﻿# BillMatch.Wpf
+# BillMatch.Wpf
 
 BillMatch.Wpf 是一个 Windows 桌面对账工具，用于比对**钱迹导出账单**与**银行账单**，快速找出漏记、多记或不一致的交易。
 
@@ -77,10 +77,10 @@ dotnet run --project BillMatch.Wpf/BillMatch.Wpf.csproj
 ### 钱迹文件
 
 - 日期：`B`
-- 金额：`F`
-- 账户1：`H`
-- 账户2：`I`
-- 描述：`J`
+- 金额：`G`
+- 账户1：`I`
+- 账户2：`J`
+- 描述：`K`
 
 ### 银行账单文件
 
